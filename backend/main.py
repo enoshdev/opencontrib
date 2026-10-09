@@ -7,6 +7,9 @@ import os
 import json
 import re
 import requests
+import logger
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -31,39 +34,52 @@ GITHUB_HEADERS = {
 }
 
 def get_difficulty(stars, open_issues):
-    if stars < 500 and open_issues > 5:
-        return "Beginner"
-    elif stars < 5000:
-        return "Intermediate"
-    else:
-        return "Advanced"
+    try:
+        if stars < 500 and open_issues > 5:
+            return "Beginner"
+        elif stars < 5000:
+            return "Intermediate"
+        else:
+            return "Advanced"
+    except Exception:
+        logger.exception("Failed to determine repository difficulty")
+
+        return "Unknown"
 
 def search_github_repos(skills):
-    skill_list = [s.strip() for s in skills.split(",")]
-    query = "+".join(skill_list) + "+good-first-issues:>3"
-    url = f"https://api.github.com/search/repositories?q={query}&sort=updated&per_page=9"
+
+    try:
+        skill_list = [s.strip() for s in skills.split(",")]
+        query = "+".join(skill_list) + "+good-first-issues:>3"
+        url = f"https://api.github.com/search/repositories?q={query}&sort=updated&per_page=9"
     
-    response = requests.get(url, headers=GITHUB_HEADERS)
-    if response.status_code != 200:
+        response = requests.get(url, headers=GITHUB_HEADERS, timeout = 10)
+
+        response.raise_for_status()
+
+        data = response.json()
+        repos = []
+    
+        for repo in data.get("items", []):
+            repos.append({
+                "name": repo["name"],
+                "full_name": repo["full_name"],
+                "description": repo["description"] or "No description available",
+                "stars": repo["stargazers_count"],
+                "language": repo["language"] or "Various",
+                "open_issues": repo["open_issues_count"],
+                "url": repo["html_url"],
+                "issues_url": repo["html_url"] + "/issues?q=is%3Aopen+label%3A%22good+first+issue%22",
+                "difficulty": get_difficulty(repo["stargazers_count"], repo["open_issues_count"])
+            })
+    
+        return repos
+    
+    except requests.RequestException:
+
+        logger.exception("Failed to fetch GitHub repositories")
+
         return []
-    
-    data = response.json()
-    repos = []
-    
-    for repo in data.get("items", []):
-        repos.append({
-            "name": repo["name"],
-            "full_name": repo["full_name"],
-            "description": repo["description"] or "No description available",
-            "stars": repo["stargazers_count"],
-            "language": repo["language"] or "Various",
-            "open_issues": repo["open_issues_count"],
-            "url": repo["html_url"],
-            "issues_url": repo["html_url"] + "/issues?q=is%3Aopen+label%3A%22good+first+issue%22",
-            "difficulty": get_difficulty(repo["stargazers_count"], repo["open_issues_count"])
-        })
-    
-    return repos
 
 @app.get("/")
 def home():
